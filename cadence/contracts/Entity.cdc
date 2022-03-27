@@ -1,4 +1,9 @@
-pub contract Entity {
+import NonFungibleToken from "./standard/NonFungibleToken.cdc"
+pub contract Entity: NonFungibleToken {
+
+  pub var totalSupply: UInt64
+
+  pub event ContractInitialized()
 
   pub event GeneratorCreated()
   pub event ElementGenerateSuccess(hex: String)
@@ -124,4 +129,46 @@ pub contract Entity {
       target: /storage/LocalEntityCollection
     )
   }
+
+
+  pub resource NFT: NonFungibleToken.INFT {
+    pub let id: UInt64
+
+    init(id:UInt64){
+      self.id = id
+    }
+  }
+
+  pub resource Collection: Provider, Receiver, CollectionPublic {
+
+    // Dictionary to hold the NFTs in the Collection
+    pub var ownedNFTs: @{UInt64: NFT}
+
+    // withdraw removes an NFT from the collection and moves it to the caller
+    pub fun withdraw(withdrawID: UInt64): @NFT
+
+    // deposit takes a NFT and adds it to the collections dictionary
+    // and adds the ID to the id array
+    pub fun deposit(token: @NFT)
+
+    // getIDs returns an array of the IDs that are in the collection
+    pub fun getIDs(): [UInt64]
+
+    // Returns a borrowed reference to an NFT in the collection
+    // so that the caller can read data and call methods from it
+    pub fun borrowNFT(id: UInt64): &NFT {
+        pre {
+            self.ownedNFTs[id] != nil: "NFT does not exist in the collection!"
+        }
+    }
+}
+
+// createEmptyCollection creates an empty Collection
+// and returns it to the caller so that they can own NFTs
+pub fun createEmptyCollection(): @Collection {
+    post {
+        result.getIDs().length == 0: "The created collection must be empty!"
+    }
+}
+
 }
