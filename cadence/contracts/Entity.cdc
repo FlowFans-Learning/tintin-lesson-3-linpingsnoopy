@@ -1,9 +1,13 @@
 import NonFungibleToken from "./standard/NonFungibleToken.cdc"
+import MetadataViews from "./MetadataViews.cdc"
+
 pub contract Entity: NonFungibleToken {
 
   pub var totalSupply: UInt64
 
   pub event ContractInitialized()
+  pub event Withdraw(id: UInt64, from: Address?)
+  pub event Deposit(id: UInt64, to: Address?)
 
   pub event GeneratorCreated()
   pub event ElementGenerateSuccess(hex: String)
@@ -106,20 +110,24 @@ pub contract Entity: NonFungibleToken {
   }
 
   init() {
+    self.totalSupply = 0
     // 保存到存储空间
+
+    let collection <- create Collection()
+
     self.account.save(
-      <- create Generator(),
-      to: /storage/ElementGenerator
+      <- create Collection(),
+      to: /storage/NFTCollection
     )
-    emit GeneratorCreated()
 
     // 链接到公有空间
-    self.account.link<&Generator>(
-      /public/ElementGenerator, // 共有空间
-      target: /storage/ElementGenerator // 目标路径
+    self.account.link<&Collection>(
+      /public/NFTCollection, // 共有空间
+      target: /storage/NFTCollection // 目标路径
     )
 
     // collection setup
+    /* 
     self.account.save(
       <- self.createCollection(),
       to: /storage/LocalEntityCollection
@@ -128,47 +136,89 @@ pub contract Entity: NonFungibleToken {
       /public/LocalEntityCollection,
       target: /storage/LocalEntityCollection
     )
+    */
+    emit ContractInitialized()
   }
 
 
-  pub resource NFT: NonFungibleToken.INFT {
+  pub resource NFT: NonFungibleToken.INFT, MetadataViews.Resolver {
     pub let id: UInt64
+    pub let name: String
+    pub let description: String
+    pub let thumbnail: String
 
-    init(id:UInt64){
+    init(id:UInt64, name: String, description: String, thumbnail: String){
       self.id = id
+      self.name = name
+      self.description = description
+      self.thumbnail = thumbnail
     }
+
+    pub fun getViews(): [Type] {
+      return [
+        Type<MetadataViews.Display>()
+      ]
+    }
+    
+
   }
 
-  pub resource Collection: Provider, Receiver, CollectionPublic {
+  pub resource Collection: NonFungibleToken.Provider, NonFungibleToken.Receiver, NonFungibleToken.CollectionPublic {
 
     // Dictionary to hold the NFTs in the Collection
-    pub var ownedNFTs: @{UInt64: NFT}
+    pub var ownedNFTs: @{UInt64: NonFungibleToken.NFT}
+
+    init() {
+      self.ownedNFTs <- {}
+    }
 
     // withdraw removes an NFT from the collection and moves it to the caller
-    pub fun withdraw(withdrawID: UInt64): @NFT
+    pub fun withdraw(withdrawID: UInt64): @NonFungibleToken.NFT {
+      let token <- self.ownedNFTs.remove(key: withdrawID) ?? panic("Id not found")
+      emit Withdraw(id: withdrawID, from: self.owner?.address)
+      return <-token
+    }
 
     // deposit takes a NFT and adds it to the collections dictionary
     // and adds the ID to the id array
-    pub fun deposit(token: @NFT)
+    pub fun deposit(token: @NonFungibleToken.NFT) {
+      let element <- token as! @Entity.NFT
+      let id: UInt64 = token.id
+
+      let oldToken <- self.ownedNFTs[id] <- token
+
+      emit Deposit(id: id, to: self.owner?.address)
+      destroy oldToken
+    }
 
     // getIDs returns an array of the IDs that are in the collection
-    pub fun getIDs(): [UInt64]
+    pub fun getIDs(): [UInt64] {
+      return self.ownedNFTs.keys
+    }
 
     // Returns a borrowed reference to an NFT in the collection
     // so that the caller can read data and call methods from it
-    pub fun borrowNFT(id: UInt64): &NFT {
-        pre {
-            self.ownedNFTs[id] != nil: "NFT does not exist in the collection!"
-        }
+    pub fun borrowNFT(id: UInt64): &NonFungibleToken.NFT {
+      return &self.ownedNFTs[id] as &NonFungibleToken.NFT
     }
-}
 
-// createEmptyCollection creates an empty Collection
-// and returns it to the caller so that they can own NFTs
-pub fun createEmptyCollection(): @Collection {
-    post {
-        result.getIDs().length == 0: "The created collection must be empty!"
+    pub fun borrowViewResolver(id: UInt64): &AnyResource{MetadataViews.Resolver} {
+      let nft = &self.ownedNFTs[id] as auth &NonFungibleToken.NFT
+      let myNFT = nft as! &Entity.NFT
+      return myNFT as &AnyResource{MetadataViews.Resolver}
     }
-}
+
+    destroy() {
+      destroy self.ownedNFTs
+    }
+  }
+
+  // createEmptyCollection creates an empty Collection
+  // and returns it to the caller so that they can own NFTs
+  pub fun createEmptyCollection(): @NonFungibleToken.Collection {
+    return <- create Collection()
+  }
+
+
 
 }
